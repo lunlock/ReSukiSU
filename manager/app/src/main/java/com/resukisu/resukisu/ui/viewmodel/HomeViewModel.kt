@@ -13,10 +13,7 @@ import com.resukisu.resukisu.KernelVersion
 import com.resukisu.resukisu.Natives
 import com.resukisu.resukisu.getKernelVersion
 import com.resukisu.resukisu.ksuApp
-import com.resukisu.resukisu.ui.susfs.util.SuSFSManager
 import com.resukisu.resukisu.ui.util.downloader.checkNewVersion
-import com.resukisu.resukisu.ui.util.getKpmModuleCount
-import com.resukisu.resukisu.ui.util.getKpmVersion
 import com.resukisu.resukisu.ui.util.getMetaModuleImplement
 import com.resukisu.resukisu.ui.util.getModuleCount
 import com.resukisu.resukisu.ui.util.getSELinuxStatus
@@ -27,12 +24,14 @@ import com.resukisu.resukisu.ui.util.getSuperuserCount
 import com.resukisu.resukisu.ui.util.getZygiskImplement
 import com.resukisu.resukisu.ui.util.isOfficialSignature
 import com.resukisu.resukisu.ui.util.isSELinuxPermissive
+import com.resukisu.resukisu.ui.util.listModules
 import com.resukisu.resukisu.ui.util.module.LatestVersionInfo
 import com.resukisu.resukisu.ui.util.rootAvailable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 
 class HomeViewModel : ViewModel() {
 
@@ -44,7 +43,6 @@ class HomeViewModel : ViewModel() {
         val lkmMode: Boolean? = null,
         val kernelVersion: KernelVersion = getKernelVersion(),
         val isRootAvailable: Boolean = false,
-        val isKpmConfigured: Boolean = false,
         val requireNewKernel: Boolean = false,
         val isSELinuxPermissive: Boolean = false,
         val isOfficialSignature: Boolean = true,
@@ -58,14 +56,11 @@ class HomeViewModel : ViewModel() {
         val deviceModel: String = "",
         val managerVersion: Pair<String, Long> = Pair("", 0L),
         val selinuxStatus: String = "",
-        val kpmVersion: String = "",
         val susfsEnabled: Boolean = false,
-        val susfsVersionSupported: Boolean = false,
         val susfsVersion: String = "",
         val susfsFeatures: String = "",
         val superuserCount: Int = 0,
         val moduleCount: Int = 0,
-        val kpmModuleCount: Int = 0,
         val managersList: Natives.ManagersList? = null,
         val isDynamicSignEnabled: Boolean = false,
         val zygiskImplement: String = "",
@@ -107,6 +102,9 @@ class HomeViewModel : ViewModel() {
     var isRefreshing by mutableStateOf(false)
         private set
 
+    var hasEnabledThirdPartySusfsModule by mutableStateOf(false)
+        private set
+
     private var loadingJobs = mutableListOf<Job>()
 
     fun loadUserSettings(context: Context) {
@@ -119,7 +117,6 @@ class HomeViewModel : ViewModel() {
             isHideLinkCard = settingsPrefs.getBoolean("is_hide_link_card", false)
             isHideZygiskImplement = settingsPrefs.getBoolean("is_hide_zygisk_Implement", false)
             isHideMetaModuleImplement = settingsPrefs.getBoolean("is_hide_meta_module_Implement", false)
-            showKpmInfo = settingsPrefs.getBoolean("show_kpm_info", false)
         }
     }
 
@@ -153,12 +150,6 @@ class HomeViewModel : ViewModel() {
                     false
                 }
 
-                val isKpmConfigured = try {
-                    Natives.isKPMEnabled()
-                } catch (_: Exception) {
-                    false
-                }
-
                 val requireNewKernel = try {
                     isManager && Natives.requireNewKernel()
                 } catch (_: Exception) {
@@ -184,7 +175,6 @@ class HomeViewModel : ViewModel() {
                     lkmMode = lkmMode,
                     kernelVersion = kernelVersion,
                     isRootAvailable = isRootAvailable,
-                    isKpmConfigured = isKpmConfigured,
                     requireNewKernel = requireNewKernel,
                     isSELinuxPermissive = isSELinuxPermissive,
                     isOfficialSignature = isOfficialSignature,
@@ -216,26 +206,23 @@ class HomeViewModel : ViewModel() {
                 )
 
                 if (!isSimpleMode) {
-                    val moduleInfo = loadModuleInfo()
+                    val (superUserCount, moduleCount, zygiskImplement, metamoduleImplement) = loadModuleInfo()
                     systemInfo = systemInfo.copy(
-                        kpmVersion = moduleInfo.first,
-                        superuserCount = moduleInfo.second,
-                        moduleCount = moduleInfo.third,
-                        kpmModuleCount = moduleInfo.fourth,
-                        zygiskImplement = moduleInfo.fifth,
-                        metaModuleImplement = moduleInfo.sixth
+                        superuserCount = superUserCount,
+                        moduleCount = moduleCount,
+                        zygiskImplement = zygiskImplement,
+                        metaModuleImplement = metamoduleImplement
                     )
                 }
 
+                hasEnabledThirdPartySusfsModule = detectEnabledThirdPartySusfsModule()
+
                 if (!isHideSusfsStatus) {
-                    val susfsInfo = loadSuSFSInfo()
+                    val (enabled, version, features) = loadSuSFSInfo()
                     systemInfo = systemInfo.copy(
-                        susfsEnabled = susfsInfo.first,
-                        susfsVersionSupported = susfsInfo.first && SuSFSManager.isBinaryAvailable(
-                            context
-                        ), // enabled & have binary
-                        susfsVersion = susfsInfo.second,
-                        susfsFeatures = susfsInfo.third,
+                        susfsEnabled = enabled,
+                        susfsVersion = version,
+                        susfsFeatures = features,
                     )
                 }
 
@@ -340,14 +327,8 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    private suspend fun loadModuleInfo(): Tuple6<String, Int, Int, Int, String, String> {
+    private suspend fun loadModuleInfo(): Tuple4<Int, Int, String, String> {
         return withContext(Dispatchers.IO) {
-            val kpmVersion = try {
-                getKpmVersion()
-            } catch (_: Exception) {
-                "Unknown"
-            }
-
             val superuserCount = try {
                 getSuperuserCount()
             } catch (_: Exception) {
@@ -356,12 +337,6 @@ class HomeViewModel : ViewModel() {
 
             val moduleCount = try {
                 getModuleCount()
-            } catch (_: Exception) {
-                0
-            }
-
-            val kpmModuleCount = try {
-                getKpmModuleCount()
             } catch (_: Exception) {
                 0
             }
@@ -378,14 +353,14 @@ class HomeViewModel : ViewModel() {
                 "None"
             }
 
-            Tuple6(kpmVersion, superuserCount, moduleCount, kpmModuleCount, zygiskImplement, metaModuleImplement)
+            Tuple4(superuserCount, moduleCount, zygiskImplement, metaModuleImplement)
         }
     }
 
     private suspend fun loadSuSFSInfo(): Triple<Boolean, String, String> {
         return withContext(Dispatchers.IO) {
             val susfsEnabled = try {
-                getSuSFSStatus().equals("true", ignoreCase = true)
+                getSuSFSStatus()
             } catch (_: Exception) {
                 false
             }
@@ -411,6 +386,26 @@ class HomeViewModel : ViewModel() {
             }
 
             Triple(true, susfsVersion, susfsFeatures)
+        }
+    }
+
+    private suspend fun detectEnabledThirdPartySusfsModule(): Boolean {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val modulesJson = listModules()
+                val array = JSONArray(modulesJson)
+                for (i in 0 until array.length()) {
+                    val module = array.optJSONObject(i) ?: continue
+                    val enabled = module.optBoolean("enabled", false)
+                    if (!enabled) continue
+
+                    val id = module.optString("id", "")
+                    if (id.contains("susfs", ignoreCase = true)) {
+                        return@withContext true
+                    }
+                }
+                false
+            }.getOrDefault(false)
         }
     }
 
@@ -509,16 +504,17 @@ class HomeViewModel : ViewModel() {
         val sixth: T6
     )
 
-    data class Tuple5<T1, T2, T3, T4, T5>(
+    data class Tuple4<T1, T2, T3, T4>(
         val first: T1,
         val second: T2,
         val third: T3,
-        val fourth: T4,
-        val fifth: T5
+        val fourth: T4
     )
 
     override fun onCleared() {
         super.onCleared()
+
+
         loadingJobs.forEach { it.cancel() }
         loadingJobs.clear()
     }

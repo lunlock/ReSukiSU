@@ -1,5 +1,11 @@
-#[cfg(all(target_arch = "aarch64", target_os = "android"))]
-use crate::android::kpm;
+use std::{path::Path, process::Command};
+
+use anyhow::{Context, Result};
+use libc::_exit;
+use log::{info, warn};
+use prop_rs_android::{resetprop::ResetProp, sys_prop};
+use rustix::process::chdir;
+
 use crate::{
     android::{
         dynamic_manager, ksucalls,
@@ -9,14 +15,6 @@ use crate::{
     },
     assets, defs,
 };
-use anyhow::{Context, Result};
-use libc::_exit;
-use log::{info, warn};
-use prop_rs_android::resetprop::ResetProp;
-use prop_rs_android::sys_prop;
-use rustix::process::chdir;
-use std::path::Path;
-use std::process::Command;
 
 pub fn on_post_data_fs() -> Result<()> {
     ksucalls::report_post_fs_data();
@@ -76,6 +74,13 @@ pub fn on_post_data_fs() -> Result<()> {
         warn!("prune modules failed: {e}");
     }
 
+    // Refresh /metadata/watchdog/ksu/modules.rc so the next boot's kernel hook sees the
+    // current module set. Acts as a safety net when state was changed outside
+    // of ksud's normal mutation commands.
+    if let Err(e) = crate::android::module::regenerate_preinit_rc() {
+        warn!("regenerate preinit rc failed: {e}");
+    }
+
     if let Err(e) = restorecon::restorecon() {
         warn!("restorecon failed: {e}");
     }
@@ -96,10 +101,8 @@ pub fn on_post_data_fs() -> Result<()> {
         warn!("init features failed: {e}");
     }
 
-    #[cfg(all(target_arch = "aarch64", target_os = "android"))]
-    if let Err(e) = kpm::booted_load() {
-        warn!("KPM: Failed to start KPM watcher: {e}");
-    }
+    // Load susfs config entries that must capture metadata before mounts/overlays.
+    crate::android::susfs::init_event::on_post_fs_data();
 
     // execute metamodule post-fs-data script first (priority)
     if let Err(e) = metamodule::exec_stage_script("post-fs-data", true) {
@@ -126,6 +129,9 @@ pub fn on_post_data_fs() -> Result<()> {
     if let Err(e) = crate::android::umount_config::load_umount_config() {
         warn!("load umount config failed: {e}");
     }
+
+    // Complete susfs kstat updates after modules have been mounted.
+    crate::android::susfs::init_event::on_post_mount();
 
     run_stage("post-mount", true);
 
@@ -164,11 +170,14 @@ pub fn run_stage(stage: &str, block: bool) {
 
 pub fn on_services() {
     info!("on_services triggered!");
+    crate::android::susfs::init_event::on_services();
     run_stage("service", false);
 }
 
 pub fn on_boot_completed() {
     ksucalls::report_boot_complete();
+    // Load susfs boot-completed
+    let _ = crate::android::susfs::init_event::on_boot_completed();
     info!("on_boot_completed triggered!");
 
     run_stage("boot-completed", false);

@@ -25,12 +25,14 @@ import com.resukisu.resukisu.ui.KsuService
 import com.resukisu.resukisu.ui.util.HanziToPinyin
 import com.resukisu.zako.IKsuInterface
 import com.topjohnwu.superuser.Shell
+import com.topjohnwu.superuser.ipc.RootService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -42,7 +44,8 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
+
+internal const val RECENTLY_INSTALLED_WINDOW_MILLIS = 60 * 60 * 1000L
 
 enum class AppCategory(val displayNameRes: Int, val persistKey: String) {
     ALL(com.resukisu.resukisu.R.string.category_all_apps, "ALL"),
@@ -73,7 +76,9 @@ class SuperUserViewModel : ViewModel() {
     companion object {
         private const val TAG = "SuperUserViewModel"
         private val appsLock = Any()
-        var apps by mutableStateOf<List<AppInfo>>(emptyList())
+        private var apps by mutableStateOf<List<AppInfo>>(emptyList())
+        var isRefreshing by mutableStateOf(false)
+            private set
 
         @JvmStatic
         fun getAppIconDrawable(context: Context, packageName: String): Drawable? {
@@ -81,6 +86,9 @@ class SuperUserViewModel : ViewModel() {
             return appList.find { it.packageName == packageName }
                 ?.packageInfo?.applicationInfo?.loadIcon(context.packageManager)
         }
+
+        @JvmStatic
+        fun getAppListSnapshot(): List<AppInfo> = synchronized(appsLock) { apps }
 
         var appGroups by mutableStateOf<List<AppGroup>>(emptyList())
 
@@ -91,7 +99,7 @@ class SuperUserViewModel : ViewModel() {
         private const val CORE_POOL_SIZE = 8
         private const val MAX_POOL_SIZE = 16
         private const val KEEP_ALIVE_TIME = 60L
-        private const val BATCH_SIZE = 20
+        private const val BATCH_SIZE = 100
     }
 
     @Immutable
@@ -112,7 +120,8 @@ class SuperUserViewModel : ViewModel() {
     data class AppGroup(
         val uid: Int,
         val apps: List<AppInfo>,
-        val profile: Natives.Profile?
+        val profile: Natives.Profile?,
+
     ) : Parcelable {
         @IgnoredOnParcel
         val mainApp: AppInfo = apps.first()
@@ -124,6 +133,12 @@ class SuperUserViewModel : ViewModel() {
         val userName: String? = Natives.getUserName(uid)
         @IgnoredOnParcel
         val hasCustomProfile : Boolean = profile?.let { if (it.allowSu) !it.rootUseDefault else !it.nonRootUseDefault } ?: false
+
+        @IgnoredOnParcel
+        val isRecentlyInstalled: Boolean = run {
+            val cutoffMillis = System.currentTimeMillis() - RECENTLY_INSTALLED_WINDOW_MILLIS
+            apps.maxOfOrNull { it.packageInfo.firstInstallTime }?.let { it >= cutoffMillis } == true
+        }
     }
 
     private val appProcessingThreadPool = ThreadPoolExecutor(
@@ -146,8 +161,6 @@ class SuperUserViewModel : ViewModel() {
     var selectedCategory by mutableStateOf(loadSelectedCategory())
         private set
     var currentSortType by mutableStateOf(loadCurrentSortType())
-        private set
-    var isRefreshing by mutableStateOf(false)
         private set
     var showBatchActions by mutableStateOf(false)
         internal set
@@ -231,11 +244,13 @@ class SuperUserViewModel : ViewModel() {
         appListMutex.tryLock().let { locked ->
             if (locked) {
                 try {
-                    apps = apps.map { app ->
+                    val updatedApps = apps.map { app ->
                         if (app.packageName == packageName) {
                             app.copy(profile = updatedProfile)
                         } else app
                     }
+                    apps = updatedApps
+                    appGroups = groupAppsByUid(updatedApps)
                 } finally {
                     appListMutex.unlock()
                 }
@@ -276,29 +291,33 @@ class SuperUserViewModel : ViewModel() {
                     }
                 }.awaitAll().flatten()
 
-                appListMutex.withLock { apps = updatedApps }
+                appListMutex.withLock {
+                    apps = updatedApps
+                    appGroups = groupAppsByUid(updatedApps)
+                }
                 loadingProgress = 1f
             }
         }
     }
 
-    private var serviceConnection: ServiceConnection? = null
-
-    private suspend fun connectKsuService(onDisconnect: () -> Unit = {}): IBinder? =
-        suspendCoroutine { continuation ->
+    private suspend fun connectKsuService(onDisconnect: () -> Unit = {}): Pair<ServiceConnection, IBinder>? =
+        suspendCancellableCoroutine { continuation ->
             val connection = object : ServiceConnection {
                 override fun onServiceDisconnected(name: ComponentName?) {
                     onDisconnect()
-                    serviceConnection = null
                 }
+
                 override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-                    continuation.resume(binder)
+                    if (binder == null) {
+                        continuation.resume(null)
+                    } else {
+                        continuation.resume(this to binder)
+                    }
                 }
             }
-            serviceConnection = connection
             val intent = Intent(ksuApp, KsuService::class.java)
             try {
-                val task = com.topjohnwu.superuser.ipc.RootService.bindOrTask(
+                val task = RootService.bindOrTask(
                     intent, Shell.EXECUTOR, connection
                 )
                 task?.let { Shell.getShell().execTask(it) }
@@ -308,61 +327,67 @@ class SuperUserViewModel : ViewModel() {
             }
         }
 
-    private fun stopKsuService() {
-        serviceConnection?.let {
-            viewModelScope.launch(Dispatchers.Main) {
-                try {
-                    val intent = Intent(ksuApp, KsuService::class.java)
-                    com.topjohnwu.superuser.ipc.RootService.stop(intent)
-                    serviceConnection = null
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to stop KsuService", e)
-                }
+    private fun stopKsuService(serviceConnection: ServiceConnection) {
+        viewModelScope.launch(Dispatchers.Main) {
+            try {
+                RootService.unbind(serviceConnection)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to stop KsuService", e)
             }
         }
     }
 
     suspend fun fetchAppList() {
+        // prevent multiple concurrent refreshes
+        if (isRefreshing) return
+
         isRefreshing = true
         loadingProgress = 0f
+        val (connection, binder) = connectKsuService() ?: run { isRefreshing = false; return }
 
-        val binder = connectKsuService() ?: run { isRefreshing = false; return }
+        try {
 
-        withContext(Dispatchers.IO) {
-            val pm = ksuApp.packageManager
-            val allPackages = IKsuInterface.Stub.asInterface(binder)
-            val total = allPackages.packageCount
-            val pageSize = 100
-            val result = mutableListOf<AppInfo>()
+            withContext(Dispatchers.IO) {
+                val pm = ksuApp.packageManager
+                val allPackages = IKsuInterface.Stub.asInterface(binder)
+                val total = allPackages.packageCount
+                val pageSize = 100
+                val result = mutableListOf<AppInfo>()
 
-            var start = 0
-            while (start < total) {
-                val page = allPackages.getPackages(start, pageSize)
-                if (page.isEmpty()) break
+                var start = 0
+                while (start < total) {
+                    val page = allPackages.getPackages(start, pageSize)
+                    if (page.isEmpty()) break
 
-                result += page.mapNotNull { packageInfo ->
-                    packageInfo.applicationInfo?.let { appInfo ->
-                        AppInfo(
-                            label = appInfo.loadLabel(pm).toString(),
-                            packageInfo = packageInfo,
-                            profile = Natives.getAppProfile(packageInfo.packageName, appInfo.uid)
-                        )
+                    result += page.mapNotNull { packageInfo ->
+                        packageInfo.applicationInfo?.let { appInfo ->
+                            AppInfo(
+                                label = appInfo.loadLabel(pm).toString(),
+                                packageInfo = packageInfo,
+                                profile = Natives.getAppProfile(
+                                    packageInfo.packageName,
+                                    appInfo.uid
+                                )
+                            )
+                        }
                     }
+                    start += page.size
+                    loadingProgress = start.toFloat() / total
                 }
-                start += page.size
-                loadingProgress = start.toFloat() / total
-            }
 
-            stopKsuService()
-
-            appListMutex.withLock {
-                val filteredApps = result.filter { it.packageName != ksuApp.packageName }
-                apps = filteredApps
-                appGroups = groupAppsByUid(filteredApps)
+                appListMutex.withLock {
+                    val filteredApps = result.filter { it.packageName != ksuApp.packageName }
+                    apps = filteredApps
+                    appGroups = groupAppsByUid(filteredApps)
+                }
+                loadingProgress = 1f
             }
-            loadingProgress = 1f
+        } catch (e: Exception) {
+            Log.e(TAG, "Error refresh app list", e)
+        } finally {
+            isRefreshing = false
+            stopKsuService(connection)
         }
-        isRefreshing = false
     }
 
     val appGroupList by derivedStateOf {
@@ -375,6 +400,48 @@ class SuperUserViewModel : ViewModel() {
         }.filter { group ->
             group.uid == 2000 || showSystemApps ||
                     group.apps.any { it.packageInfo.applicationInfo!!.flags.and(ApplicationInfo.FLAG_SYSTEM) == 0 }
+        }.run {
+            when (selectedCategory) {
+                AppCategory.ALL -> this
+                AppCategory.ROOT -> this.filter { it.allowSu }
+                AppCategory.CUSTOM -> this.filter { !it.allowSu && it.hasCustomProfile }
+                AppCategory.DEFAULT -> this.filter { !it.allowSu && !it.hasCustomProfile }
+            }
+        }.sortedWith { group1, group2 ->
+            val priority1 = when {
+                group1.allowSu -> 0
+                group1.isRecentlyInstalled -> 1
+                group1.hasCustomProfile -> 2
+                else -> 3
+            }
+            val priority2 = when {
+                group2.allowSu -> 0
+                group2.isRecentlyInstalled -> 1
+                group2.hasCustomProfile -> 2
+                else -> 3
+            }
+
+            val priorityComparison = priority1.compareTo(priority2)
+            if (priorityComparison != 0) {
+                priorityComparison
+            } else {
+                when (currentSortType) {
+                    SortType.NAME_ASC -> group1.mainApp.label.lowercase()
+                        .compareTo(group2.mainApp.label.lowercase())
+
+                    SortType.NAME_DESC -> group2.mainApp.label.lowercase()
+                        .compareTo(group1.mainApp.label.lowercase())
+
+                    SortType.INSTALL_TIME_NEW -> group2.mainApp.packageInfo.firstInstallTime
+                        .compareTo(group1.mainApp.packageInfo.firstInstallTime)
+
+                    SortType.INSTALL_TIME_OLD -> group1.mainApp.packageInfo.firstInstallTime
+                        .compareTo(group2.mainApp.packageInfo.firstInstallTime)
+
+                    else -> group1.mainApp.label.lowercase()
+                        .compareTo(group2.mainApp.label.lowercase())
+                }
+            }
         }
     }
 
@@ -400,9 +467,11 @@ class SuperUserViewModel : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         try {
-            stopKsuService()
             appProcessingThreadPool.close()
             configChangeListeners.clear()
+
+            val intent = Intent(ksuApp, KsuService::class.java)
+            RootService.stop(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Error cleaning up resources", e)
         }

@@ -28,8 +28,16 @@ object ThemeUtils {
 
         settingsStateFlow.value = MainActivity.SettingsState(
             isHideOtherInfo = prefs.getBoolean("is_hide_other_info", false),
-            showKpmInfo = prefs.getBoolean("show_kpm_info", false),
             dpi = prefs.getInt("app_dpi", 0),
+            predictiveBackAnimation = MainActivity.PredictiveBackAnimation.fromValueOrDefault(
+                prefs.getString(
+                    "predictive_back_animation",
+                    ""
+                )!!
+            ),
+            predictiveBackExitDirection = MainActivity.PredictiveBackExitDirection.fromValueOrDefault(
+                prefs.getString("predictive_back_exit_direction", "")!!
+            ),
         )
 
         if (isFirstRun) {
