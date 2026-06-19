@@ -15,30 +15,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.ContentTransform
-import androidx.compose.animation.EnterExitState
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -58,18 +44,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.paint
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.app.ActivityCompat
 import androidx.core.net.toUri
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavEntryDecorator
@@ -80,18 +68,21 @@ import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.scene.SceneInfo
 import androidx.navigation3.scene.SinglePaneSceneStrategy
 import androidx.navigation3.scene.rememberSceneState
-import androidx.navigation3.ui.LocalNavAnimatedContentScope
 import androidx.navigation3.ui.NavDisplay
-import androidx.navigationevent.NavigationEvent.Companion.EDGE_LEFT
-import androidx.navigationevent.NavigationEventTransitionState.InProgress
 import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.NavigationEventState
 import androidx.navigationevent.compose.rememberNavigationEventState
+import com.resukisu.resukisu.KernelSUApplication
 import com.resukisu.resukisu.Natives
 import com.resukisu.resukisu.ui.activity.PermissionRequestInterface
 import com.resukisu.resukisu.ui.activity.component.NavigationBar
 import com.resukisu.resukisu.ui.activity.util.ThemeChangeContentObserver
 import com.resukisu.resukisu.ui.activity.util.ThemeUtils
+import com.resukisu.resukisu.ui.animation.predictiveback.AOSPCrossActivityAnimation
+import com.resukisu.resukisu.ui.animation.predictiveback.KernelSUClassicPredictiveBackAnimation
+import com.resukisu.resukisu.ui.animation.predictiveback.MiuixPredictiveBackAnimation
+import com.resukisu.resukisu.ui.animation.predictiveback.NoPredictiveBackAnimation
+import com.resukisu.resukisu.ui.animation.predictiveback.ScalePredictiveBackAnimation
 import com.resukisu.resukisu.ui.component.InstallConfirmationDialog
 import com.resukisu.resukisu.ui.component.ZipFileDetector
 import com.resukisu.resukisu.ui.component.ZipFileInfo
@@ -112,16 +103,20 @@ import com.resukisu.resukisu.ui.screen.TemplateEditorScreen
 import com.resukisu.resukisu.ui.screen.UmountManagerScreen
 import com.resukisu.resukisu.ui.screen.about.AboutScreen
 import com.resukisu.resukisu.ui.screen.about.OpenSourceLicenseScreen
+import com.resukisu.resukisu.ui.screen.kernelFlash.KernelFlashScreen
 import com.resukisu.resukisu.ui.screen.moduleRepo.ModuleRepoScreen
 import com.resukisu.resukisu.ui.screen.moduleRepo.OnlineModuleDetailScreen
+import com.resukisu.resukisu.ui.screen.themeSettings.ThemeSettingsScreen
+import com.resukisu.resukisu.ui.screen.themeSettings.util.applyLanguage
 import com.resukisu.resukisu.ui.susfs.SuSFSConfigScreen
-import com.resukisu.resukisu.ui.theme.CardConfig
 import com.resukisu.resukisu.ui.theme.KernelSUTheme
 import com.resukisu.resukisu.ui.theme.ThemeConfig
 import com.resukisu.resukisu.ui.theme.backgroundImagePainter
-import com.resukisu.resukisu.ui.theme.hazeSource
+import com.resukisu.resukisu.ui.theme.blurBackgroundImageBitmap
+import com.resukisu.resukisu.ui.theme.blurSource
+import com.resukisu.resukisu.ui.util.LocalBackgroundBlurAnchor
+import com.resukisu.resukisu.ui.util.LocalBlurState
 import com.resukisu.resukisu.ui.util.LocalHandlePageChange
-import com.resukisu.resukisu.ui.util.LocalHazeState
 import com.resukisu.resukisu.ui.util.LocalPagerState
 import com.resukisu.resukisu.ui.util.LocalPermissionRequestInterface
 import com.resukisu.resukisu.ui.util.LocalSelectedPage
@@ -129,9 +124,11 @@ import com.resukisu.resukisu.ui.util.LocalSnackbarHost
 import com.resukisu.resukisu.ui.util.install
 import com.resukisu.resukisu.ui.util.rootAvailable
 import com.resukisu.resukisu.ui.viewmodel.HomeViewModel
+import com.resukisu.resukisu.ui.viewmodel.ModuleViewModel
+import com.resukisu.resukisu.ui.viewmodel.PredictiveBackAnimation
+import com.resukisu.resukisu.ui.viewmodel.SettingsViewModel
 import com.resukisu.resukisu.ui.viewmodel.SuperUserViewModel
 import com.resukisu.resukisu.ui.webui.WebUIActivity
-import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -140,21 +137,16 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import zako.zako.zako.zakoui.screen.kernelFlash.KernelFlashScreen
-import zako.zako.zako.zakoui.screen.moreSettings.MoreSettingsScreen
-import zako.zako.zako.zakoui.screen.moreSettings.util.LocaleHelper
+import top.yukonga.miuix.kmp.blur.LayerBackdrop
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
+import top.yukonga.miuix.kmp.shader.isRenderEffectSupported
 import kotlin.coroutines.resume
 
 class MainActivity : ComponentActivity() {
     private lateinit var superUserViewModel: SuperUserViewModel
     private lateinit var homeViewModel: HomeViewModel
-    internal val settingsStateFlow = MutableStateFlow(SettingsState())
-
-    data class SettingsState(
-        val isHideOtherInfo: Boolean = false,
-        val showKpmInfo: Boolean = false,
-        val dpi: Int = 0
-    )
+    private lateinit var moduleViewModel: ModuleViewModel
+    private lateinit var settingsViewModel: SettingsViewModel
 
     private var showConfirmationDialog = mutableStateOf(false)
     private var pendingZipFiles = mutableStateOf<List<ZipFileInfo>>(emptyList())
@@ -163,13 +155,14 @@ class MainActivity : ComponentActivity() {
     private var isInitialized = false
 
     override fun attachBaseContext(newBase: Context?) {
-        super.attachBaseContext(newBase?.let { LocaleHelper.applyLanguage(it) })
+        super.attachBaseContext(newBase?.let { applyLanguage(it) })
     }
 
     private val intentState = MutableStateFlow(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         try {
+            val splashScreen = installSplashScreen()
 
             // Enable edge to edge
             enableEdgeToEdge()
@@ -179,6 +172,17 @@ class MainActivity : ComponentActivity() {
             }
 
             super.onCreate(savedInstanceState)
+
+            homeViewModel =
+                ViewModelProvider(applicationContext as KernelSUApplication)[HomeViewModel::class.java]
+            splashScreen.setKeepOnScreenCondition {
+                !homeViewModel.uiState.value.isInitialDataLoaded
+                        || (
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                ThemeConfig.isEnableBlurExp &&
+                                blurBackgroundImageBitmap != null
+                        )
+            }
 
             val isManager = Natives.isManager
             if (isManager && !Natives.requireNewKernel()) {
@@ -248,7 +252,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    val settings by settingsStateFlow.collectAsState()
+                    val settings by settingsViewModel.uiState.collectAsStateWithLifecycle()
                     val systemDensity = LocalDensity.current
 
                     val density = remember(systemDensity, settings.dpi) {
@@ -420,23 +424,30 @@ class MainActivity : ComponentActivity() {
                             }
                         )
 
-                        val exitAnimatable = remember { Animatable(0f) }
-                        var exitingPageKey by remember { mutableStateOf<String?>(null) }
+                        val predictiveBackAnimationHandler = remember(
+                            settings.predictiveBackAnimation,
+                            settings.predictiveBackExitDirection
+                        ) {
+                            when (settings.predictiveBackAnimation) {
+                                PredictiveBackAnimation.None -> NoPredictiveBackAnimation()
+                                PredictiveBackAnimation.AOSP -> AOSPCrossActivityAnimation(settings.predictiveBackExitDirection)
+                                PredictiveBackAnimation.Scale -> ScalePredictiveBackAnimation(
+                                    settings.predictiveBackExitDirection
+                                )
+
+                                PredictiveBackAnimation.KernelSUClassic -> KernelSUClassicPredictiveBackAnimation()
+                                PredictiveBackAnimation.MIUIX -> MiuixPredictiveBackAnimation()
+                            }
+                        }
+
                         var gestureState: NavigationEventState<SceneInfo<NavKey>>? = null
                         val navigationScope = rememberCoroutineScope()
                         val onBack: (() -> Unit) -> Unit = { callBack ->
                             navigationScope.launch {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                                    exitingPageKey = navigator.current().toString()
-                                    exitAnimatable.animateTo(
-                                        targetValue = 1f,
-                                        animationSpec = tween(
-                                            durationMillis = 200,
-                                            easing = FastOutSlowInEasing
-                                        )
-                                    )
-                                    exitAnimatable.snapTo(0f)
-                                }
+                                predictiveBackAnimationHandler.onBackPressed(
+                                    transitionState = gestureState?.transitionState,
+                                    currentPageKey = navigator.current()
+                                )
 
                                 callBack()
 
@@ -453,9 +464,6 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        val windowInfo = LocalWindowInfo.current
-                        val containerHeightPx = windowInfo.containerSize.height
-                        val containerWidthPx = windowInfo.containerSize.width.toFloat()
 
                         val entries =
                             rememberDecoratedNavEntries(
@@ -463,125 +471,76 @@ class MainActivity : ComponentActivity() {
                                 entryDecorators = listOf(
                                     rememberSaveableStateHolderNavEntryDecorator(),
                                     rememberViewModelStoreNavEntryDecorator(),
-                                    NavEntryDecorator { content ->
-                                        val pageKey = content.contentKey.toString()
-                                        val navContent = LocalNavAnimatedContentScope.current
-                                        val transition = navContent.transition
+                                    NavEntryDecorator(
+                                        onPop = { key ->
+                                            predictiveBackAnimationHandler.onPagePop(
+                                                contentPageKey = key,
+                                                animationScope = navigationScope
+                                            )
+                                        }
+                                    ) { content ->
                                         val snackBarHostState = remember { SnackbarHostState() }
+                                        var backgroundBlurAnchorCoordinates by remember {
+                                            mutableStateOf<LayoutCoordinates?>(null)
+                                        }
 
-                                        val tripe =
-                                            if (pageKey == navigator.current()
-                                                    .toString() || exitingPageKey == content.contentKey.toString()
-                                            ) {
-                                                val animatedScale by transition.animateFloat(
-                                                    label = "PredictiveScale"
-                                                ) { state ->
-                                                    when (state) {
-                                                        EnterExitState.PostExit -> 0.85f
-                                                        else -> 1f
-                                                    }
-                                                }
-
-                                                val touchY =
-                                                    (gestureState?.transitionState as? InProgress)?.latestEvent?.touchY
-
-                                                val currentPivotY =
-                                                    if (touchY != null && containerHeightPx > 0) {
-                                                        (touchY / containerHeightPx).coerceIn(
-                                                            0.1f,
-                                                            0.9f
-                                                        )
-                                                    } else 0.5f
-
-                                                val edge =
-                                                    (gestureState?.transitionState as? InProgress)?.latestEvent?.swipeEdge
-                                                        ?: 0
-
-                                                val directionMultiplier =
-                                                    if (edge == EDGE_LEFT) 1f else -1f
-                                                val currentPivotX =
-                                                    if (edge == EDGE_LEFT) 0.8f else 0.2f
-
-                                                val progress = if (pageKey != navigator.current()
-                                                        .toString()
-                                                ) 1f else exitAnimatable.value
-                                                val animatedTranslationX =
-                                                    containerWidthPx * progress * directionMultiplier
-
-                                                val modifier = Modifier.graphicsLayer {
-                                                    scaleX = animatedScale
-                                                    scaleY = animatedScale
-                                                    translationX = animatedTranslationX
-                                                    transformOrigin = TransformOrigin(
-                                                        currentPivotX,
-                                                        currentPivotY
-                                                    )
-                                                }
-                                                val backgroundColor =
-                                                    if (CardConfig.isCustomBackgroundEnabled)
-                                                        Color.Transparent
-                                                    else
-                                                        MaterialTheme.colorScheme.surfaceContainer
-
-                                                Triple(
-                                                    modifier,
-                                                    backgroundColor,
-                                                    if (gestureState?.transitionState is InProgress) 16.dp else 0.dp
-                                                )
-                                            } else {
-                                                val modifier =
-                                                    if (gestureState?.transitionState is InProgress) {
-                                                        val progress = exitAnimatable.value
-                                                        val dynamicAlpha = 0.5f * (1f - progress)
-
-                                                        Modifier
-                                                            .graphicsLayer()
-                                                            .drawWithContent {
-                                                                drawContent()
-                                                                drawRect(
-                                                                    color = Color.Black.copy(
-                                                                        alpha = dynamicAlpha
-                                                                    )
-                                                                )
-                                                            }
-                                                    } else Modifier
-
-                                                Triple(modifier, Color.Transparent, 0.dp)
+                                        LaunchedEffect(backgroundImagePainter) {
+                                            if (backgroundImagePainter == null) {
+                                                backgroundBlurAnchorCoordinates = null
                                             }
+                                        }
 
-                                        val surfaceContainer =
-                                            MaterialTheme.colorScheme.surfaceContainer
-
-                                        CompositionLocalProvider(
-                                            LocalHazeState provides if (CardConfig.isCustomBackgroundEnabled) rememberHazeState() else null,
-                                            LocalSnackbarHost provides snackBarHostState,
-                                        ) {
-                                            Surface(
-                                                modifier = tripe.first,
-                                                color = tripe.second,
-                                                shape = RoundedCornerShape(tripe.third),
+                                        with(predictiveBackAnimationHandler) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .predictiveBackAnimationDecorator(
+                                                        gestureState?.transitionState,
+                                                        content.contentKey,
+                                                        navigator.current()
+                                                    )
+                                                    .then(
+                                                        if (!ThemeConfig.backgroundImageLoaded) Modifier.background(
+                                                            MaterialTheme.colorScheme.surfaceContainer
+                                                        ) else Modifier
+                                                    )
                                             ) {
-                                                Box(
-                                                    modifier = backgroundImagePainter?.let {
-                                                        Modifier
-                                                            .fillMaxSize()
-                                                            .zIndex(-1f)
-                                                            .paint(
-                                                                painter = it,
-                                                                contentScale = ContentScale.Crop,
-                                                            )
-                                                            .drawWithContent {
-                                                                drawContent()
-                                                                drawRect(
-                                                                    color = surfaceContainer.copy(
-                                                                        alpha = ThemeConfig.backgroundDim
-                                                                    )
+                                                val surfaceContainer =
+                                                    MaterialTheme.colorScheme.surfaceContainer
+
+                                                CompositionLocalProvider(
+                                                    LocalBlurState provides rememberMaterial3BlurBackdrop(
+                                                        ThemeConfig.isEnableBlur
+                                                    ),
+                                                    LocalSnackbarHost provides snackBarHostState,
+                                                    LocalBackgroundBlurAnchor provides backgroundBlurAnchorCoordinates,
+                                                ) {
+                                                    backgroundImagePainter?.let {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .zIndex(-1f)
+                                                                .onGloballyPositioned { newCoordinates ->
+                                                                    backgroundBlurAnchorCoordinates =
+                                                                        newCoordinates.takeIf { coordinates ->
+                                                                            coordinates.isAttached
+                                                                        }
+                                                                }
+                                                                .paint(
+                                                                    painter = it,
+                                                                    contentScale = ContentScale.Crop,
                                                                 )
-                                                            }
-                                                            .hazeSource()
-                                                    } ?: Modifier
-                                                )
-                                                content.Content()
+                                                                .drawWithContent {
+                                                                    drawContent()
+                                                                    drawRect(
+                                                                        color = surfaceContainer.copy(
+                                                                            alpha = ThemeConfig.backgroundDim
+                                                                        )
+                                                                    )
+                                                                }
+                                                        )
+                                                    }
+                                                    content.Content()
+                                                }
                                             }
                                         }
                                     }
@@ -616,15 +575,13 @@ class MainActivity : ComponentActivity() {
                                     entry<Route.SuperUser> { MainScreen() }
                                     entry<Route.Module> { MainScreen() }
                                     entry<Route.Settings> { MainScreen() }
-                                    entry<Route.MoreSettings> { MoreSettingsScreen() }
+                                    entry<Route.ThemeSettings> { ThemeSettingsScreen() }
                                     entry<Route.SuSFSConfig> { SuSFSConfigScreen() }
                                     entry<Route.UmountManager> { UmountManagerScreen() }
                                     entry<Route.KernelFlash> { key ->
                                         KernelFlashScreen(
                                             key.kernelUri,
-                                            key.selectedSlot,
-                                            key.kpmPatchEnabled,
-                                            key.kpmUndoPatch
+                                            key.selectedSlot
                                         )
                                     }
                                 },
@@ -666,26 +623,20 @@ class MainActivity : ComponentActivity() {
                             navigationEventState = gestureState,
                             contentAlignment = Alignment.TopStart,
                             sizeTransform = null,
-                            predictivePopTransitionSpec = {
-                                ContentTransform(
-                                    targetContentEnter = EnterTransition.None,
-                                    initialContentExit = ExitTransition.None,
-                                    sizeTransform = null
-                                )
+                            predictivePopTransitionSpec = { swipeEdge ->
+                                with(predictiveBackAnimationHandler) {
+                                    onPredictivePopTransitionSpec(swipeEdge = swipeEdge)
+                                }
                             },
                             popTransitionSpec = {
-                                ContentTransform(
-                                    targetContentEnter = slideInHorizontally(initialOffsetX = { -it / 4 }) + fadeIn(),
-                                    initialContentExit = scaleOut(targetScale = 0.9f) + fadeOut(),
-                                    sizeTransform = null
-                                )
+                                with(predictiveBackAnimationHandler) {
+                                    onPopTransitionSpec()
+                                }
                             },
                             transitionSpec = {
-                                ContentTransform(
-                                    targetContentEnter = slideInHorizontally(initialOffsetX = { it }),
-                                    initialContentExit = slideOutHorizontally(targetOffsetX = { -it / 4 }) + fadeOut(),
-                                    sizeTransform = null
-                                )
+                                with(predictiveBackAnimationHandler) {
+                                    onTransitionSpec()
+                                }
                             }
                         )
                     }
@@ -704,8 +655,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun initializeViewModels() {
-        superUserViewModel = SuperUserViewModel()
-        homeViewModel = HomeViewModel()
+        superUserViewModel =
+            ViewModelProvider(applicationContext as KernelSUApplication)[SuperUserViewModel::class.java]
+        homeViewModel =
+            ViewModelProvider(applicationContext as KernelSUApplication)[HomeViewModel::class.java]
+        settingsViewModel =
+            ViewModelProvider(applicationContext as KernelSUApplication)[SettingsViewModel::class.java]
+        moduleViewModel =
+            ViewModelProvider(applicationContext as KernelSUApplication)[ModuleViewModel::class.java]
 
         // 设置主题变化监听器
         themeChangeObserver = ThemeUtils.registerThemeChangeObserver(this)
@@ -721,7 +678,7 @@ class MainActivity : ComponentActivity() {
         }
 
         // 初始化主题相关设置
-        ThemeUtils.initializeThemeSettings(this, settingsStateFlow)
+        ThemeUtils.initializeThemeSettings(this, settingsViewModel)
     }
 
     override fun onResume() {
@@ -752,11 +709,43 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Remember a LayerBackdrop for Material 3 with a surfaceContainer background
+ * to prevent alpha-blending artifacts.
+ *
+ * @param enableBlur Whether the blur effect is globally enabled.
+ * @return A LayerBackdrop instance if supported and enabled, null otherwise.
+ */
+@Composable
+fun rememberMaterial3BlurBackdrop(enableBlur: Boolean): LayerBackdrop? {
+    if (!enableBlur || !isRenderEffectSupported()) return null
+
+    val backgroundColor =
+        MaterialTheme.colorScheme.surfaceContainer
+
+    return rememberLayerBackdrop {
+        if (ThemeConfig.isEnableBlurExp) {
+            backgroundImagePainter?.let { painter ->
+                with(painter) {
+                    draw(size = drawContext.size)
+                }
+            }
+        } else {
+            drawRect(backgroundColor)
+        }
+
+        drawRect(
+            color = backgroundColor.copy(alpha = ThemeConfig.backgroundDim)
+        )
+
+        drawContent()
+    }
+}
+
 @Composable
 fun MainScreen() {
     // 页面隐藏处理
-    val activity = LocalActivity.current as MainActivity
-    val settings by activity.settingsStateFlow.collectAsState()
+    LocalActivity.current as MainActivity
 
     var savedPages by rememberSaveable<MutableState<List<BottomBarDestination>>> {
         mutableStateOf(emptyList())
@@ -764,7 +753,7 @@ fun MainScreen() {
 
     val pages by produceState(initialValue = savedPages) {
         value = withContext(Dispatchers.IO) {
-            savedPages = BottomBarDestination.getPages(settings)
+            savedPages = BottomBarDestination.getPages()
             return@withContext savedPages
         }
     }
@@ -822,12 +811,8 @@ fun MainScreen() {
         }
     }
 
-    BackHandler {
-        if (pagerState.currentPage != 0) {
-            handlePageChange(0)
-        } else {
-            activity.moveTaskToBack(true)
-        }
+    BackHandler(pagerState.currentPage != 0) {
+        handlePageChange(0)
     }
 
     CompositionLocalProvider(
@@ -841,15 +826,19 @@ fun MainScreen() {
             val isPortrait = maxWidth < maxHeight || (maxHeight / maxWidth > 1.4f)
             val content = @Composable { paddingBottom: Dp ->
                 HorizontalPager(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blurSource(),
                     state = pagerState,
                     userScrollEnabled = userScrollEnabled,
+                    beyondViewportPageCount = 1,
                 ) { pageIndex ->
                     if (pages.isEmpty()) return@HorizontalPager
 
                     val snackBarHostState = remember { SnackbarHostState() }
                     CompositionLocalProvider(
                         LocalSnackbarHost provides snackBarHostState,
+                        LocalBlurState provides rememberMaterial3BlurBackdrop(ThemeConfig.isEnableBlur),
                     ) {
                         val destination = pages[pageIndex]
                         destination.direction(paddingBottom)

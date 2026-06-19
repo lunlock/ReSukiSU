@@ -90,6 +90,10 @@
     <string name="settings_auto_jailbreak_summary">Automatically use Magica to escalate privileges when Permissive SELinux is detected at boot. Requires granting autostart permission to this app.</string>
     <string name="settings_adb_root" translatable="false">ADB Root</string>
     <string name="settings_adb_root_summary">Run adbd daemon with root privileges</string>
+    <string name="settings_selinux_hide">Hide SELinux modification</string>
+    <string name="settings_selinux_hide_summary">Prevent applications from detecting SELinux modifications</string>
+    <string name="settings_selinux_hide_reboot_required">Reboot to take effect</string>
+    <string name="settings_selinux_hide_failed">Error: %d</string>
     <string name="reboot_to_apply">Reboot to take effect</string>
     <string name="module_magisk_conflict">Modules are unavailable due to a conflict with Magisk!</string>
     <string name="home_learn_kernelsu">Learn KernelSU</string>
@@ -107,6 +111,8 @@
     <string name="profile_namespace_individual">Individual</string>
     <string name="profile_groups">Groups</string>
     <string name="profile_capabilities">Capabilities</string>
+    <string name="profile_flags">Flags</string>
+    <string name="profile_flags_desc_no_new_privs">Prevent further privilege escalation via KernelSU from within the context of this root profile.</string>
     <string name="profile_selinux_context">SELinux context</string>
     <string name="profile_umount_modules">Umount modules</string>
     <string name="failed_to_update_app_profile">Failed to update App Profile for %s</string>
@@ -130,6 +136,8 @@
     <string name="module_changelog">Changelog</string>
     <string name="settings_profile_template">App Profile Template</string>
     <string name="settings_profile_template_summary">Manage local and online template of App Profile</string>
+    <string name="manage_app_profile">Manage App Profile Template</string>
+    <string name="recently_installed">Recently installed</string>
     <string name="app_profile_template_create">Create template</string>
     <string name="app_profile_template_edit">Edit template</string>
     <string name="app_profile_template_id">ID</string>
@@ -195,6 +203,14 @@
     <string name="restore_allowlist">Restore Allowlist</string>
     <string name="settings_custom_background">Custom App Background</string>
     <string name="settings_custom_background_summary">Select an image as background</string>
+    <string name="settings_config_enable_blur">Enable Blur</string>
+    <string name="settings_config_enable_blur_summary">Enable blur process for this app</string>
+    <string name="settings_exp_draw_background_to_blur">Draw Custom background to blur</string>
+    <string name="settings_exp_draw_background_to_blur_description">Experiment feature, process with your own risk</string>
+    <string name="settings_config_use_custom_background_seed_color">Pick color from custom background</string>
+    <string name="settings_config_use_custom_background_seed_color_summary">Extract dynamic color seed color from custom background</string>
+    <string name="settings_custom_enable_high_contrast">High Contrast Mode</string>
+    <string name="settings_custom_enable_high_contrast_summary">Render shadow around with text</string>
     <string name="settings_card_alpha">Card transparency</string>
     <string name="home_android_version">Android version</string>
     <string name="home_device_model">Device model</string>
@@ -211,6 +227,7 @@
     <string name="feature_status_managed_summary">This feature is managed by a module</string>
     <string name="settings_mode_default">Default</string>
     <string name="more_settings">More settings</string>
+    <string name="theme_settings">Theme settings</string>
     <string name="selinux">SELinux</string>
     <string name="selinux_enabled">Enabled</string>
     <string name="selinux_disabled">Disabled</string>
@@ -236,6 +253,8 @@
     <string name="theme_dark">Dark</string>
     <string name="dynamic_color_title">Dynamic colours</string>
     <string name="dynamic_color_summary">Dynamic colours using system themes</string>
+    <string name="dynamic_palette_style">Palette style</string>
+    <string name="dynamic_color_spec">Color spec</string>
     <string name="choose_theme_color">Choose a theme colour</string>
     <string name="color_default">Blue</string>
     <string name="color_green">Green</string>
@@ -315,6 +334,19 @@
     <string name="selinux_change_failed">SELinux Status change failed</string>
     <string name="advanced_settings">Advanced Settings</string>
     <string name="appearance_settings">Customize the toolbar</string>
+    <string name="predictive_back_settings">Predictive Back</string>
+    <string name="predictive_back_animation">Predictive Back Animation</string>
+    <string name="predictive_back_animation_desc">Select the animation effect for predictive back</string>
+    <string name="predictive_back_exit_direction">Exit Direction</string>
+    <string name="predictive_back_exit_direction_desc">Select the exit direction for predictive back</string>
+    <string name="predictive_back_animation_none">None</string>
+    <string name="predictive_back_animation_aosp">AOSP</string>
+    <string name="predictive_back_animation_scale">Scale</string>
+    <string name="predictive_back_animation_ksu_classic">KernelSU Classic</string>
+    <string name="predictive_back_animation_miuix" translatable="false">Miuix</string>
+    <string name="predictive_back_exit_direction_follow_gesture">Follow Gesture</string>
+    <string name="predictive_back_exit_direction_always_right">Always Right</string>
+    <string name="predictive_back_exit_direction_always_left">Always Left</string>
     <string name="back">Comeback</string>
     <string name="background_set_success">Background set successfully</string>
     <string name="background_removed">Removed custom backgrounds</string>
@@ -636,9 +668,9 @@ Important Note:\n
     <string name="sus_maps_description_text">Hide the real file paths of memory mappings from /proc/self/[maps|smaps|smaps_rollup|map_files|mem|pagemap]. Please note: This feature does not support hiding anonymous memory mappings, nor can it hide inline hooks or PLT hooks caused by the injected library itself</string>
     <string name="sus_maps_warning">Important Notice: For applications with well-implemented injection detection mechanisms, this feature may not effectively bypass detection</string>
     <string name="sus_maps_debug_info">First, find the target application\'s PID and UID using ps -enf, then check the relevant paths in /proc/&lt;pid&gt;/maps and compare the device numbers with those in /proc/1/mountinfo to ensure consistency. Only when the device numbers match can the map hiding function work properly</string>
-    <string name="incompatible_kernel_msg">
-    The current manager is incompatible with this kernel! Please upgrade the kernel to version %2$d or higher (currently %1$d)
-    </string>
+    <string name="uapi_mismatch">Manager uapi version (%1$d) and KernelSU driver uapi version (%2$d) mismatch.</string>
+    <string name="require_manager_version">The current KernelSU manager version %1$d is too low for KernelSU to work properly. Please upgrade manager to version %2$d or higher!</string>
+    <string name="require_kernel_version">The current KernelSU version %1$d is too low for the manager to work properly. Please upgrade to version %2$d or higher!</string>
     <string name="umount_path_manager">Umount Path Management</string>
     <string name="umount_path_manager_summary">Manage kernel unmount paths</string>
     <string name="no_any_umount_path">Not have any umount path</string>
@@ -661,7 +693,7 @@ Important Note:\n
     <string name="please_check_network">Please check your internet connection, and try again</string>
     <string name="confirm_install_module_title">Do you want install %s module?</string>
     <string name="assets_multiple_select_dialog_title">Select you want install asset</string>
-    <string name="assets_multiple_select_dialog_content_description">Size: %s, Download count: %s</string>
+    <string name="assets_multiple_select_dialog_content_description">Size: %1$s, Download count: %2$s</string>
     <string name="assets_multiple_select_dialog_warning">No any asset selected</string>
     <string name="installed">Installed</string>
     <string name="open_module_home_page">Open module homepage in browser</string>
